@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Multi-Drone Delivery</title>
+    <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyB0WU8WGrOvlX1vQpcfEHFz2lzRBDKvRe0"></script>
+</head>
+<body>
+    <div style="display: flex;">
+        <!-- Χάρτης -->
+        <div id="map" style="width: 70%; height: 100vh;"></div>
+
+        <!-- Πλαϊνό UI -->
+        <div style="width: 30%; padding: 20px; background: #f4f4f4;">
+            <h3>Drone Delivery</h3>
+            <label>Σημείο Α (Παραλαβή):</label><br>
+            Latitude: <input id="latA" type="text"><br>
+            Longitude: <input id="lonA" type="text"><br><br>
+            
+            <label>Σημείο Β (Παράδοση):</label><br>
+            Latitude: <input id="latB" type="text"><br>
+            Longitude: <input id="lonB" type="text"><br><br>
+            
+            <button onclick="sendDrone()">Αποστολή Drone</button><br><br>
+            
+            <h4>Αποτελέσματα:</h4>
+            <p id="results"></p>
+        </div>
+    </div>
+
+    <script>
+        let map;
+        let fleetMarkers = []; // Πίνακας για markers στόλων
+
+        function initMap() {
+            map = new google.maps.Map(document.getElementById("map"), {
+                center: { lat: 37.9755, lng: 23.7348 },
+                zoom: 12,
+            });
+
+            loadFleets(); // Αρχική φόρτωση στόλων
+            setInterval(refreshFleets, 5000); // Αυτόματη ανανέωση στόλων κάθε 5 δευτερόλεπτα
+        }
+
+        async function loadFleets() {
+            try {
+                const response = await fetch("http://127.0.0.1:5000/get_fleets");
+                if (!response.ok) throw new Error("Failed to fetch fleet data");
+
+                const fleets = await response.json();
+                fleets.forEach(fleet => {
+                    addFleetMarker(fleet);
+                });
+            } catch (error) {
+                console.error("Error loading fleets:", error);
+            }
+        }
+
+        function addFleetMarker(fleet) {
+            const marker = new google.maps.Marker({
+                position: { lat: fleet.location.lat, lng: fleet.location.lon },
+                map,
+                label: { text: `${fleet.drones}`, color: "white", fontWeight: "bold" },
+                icon: {
+                    path: google.maps.SymbolPath.CIRCLE,
+                    fillColor: "blue",
+                    fillOpacity: 1,
+                    strokeColor: "white",
+                    strokeWeight: 2,
+                    scale: 15,
+                },
+            });
+
+            const infoWindow = new google.maps.InfoWindow({
+                content: `<strong>${fleet.name}</strong><br>Available Drones: ${fleet.drones}`,
+            });
+
+            marker.addListener("click", () => infoWindow.open(map, marker));
+            fleetMarkers.push({ marker, infoWindow, fleetId: fleet.id });
+        }
+
+        async function refreshFleets() {
+            try {
+                const response = await fetch("http://127.0.0.1:5000/get_fleets");
+                if (!response.ok) throw new Error("Failed to refresh fleet data");
+
+                const fleets = await response.json();
+                fleets.forEach(fleet => {
+                    const fleetMarker = fleetMarkers.find(f => f.fleetId === fleet.id);
+                    if (fleetMarker) {
+                        fleetMarker.marker.setLabel({
+                            text: `${fleet.drones}`,
+                            color: "white",
+                            fontWeight: "bold",
+                        });
+
+                        fleetMarker.infoWindow.setContent(
+                            `<strong>${fleet.name}</strong><br>Available Drones: ${fleet.drones}`
+                        );
+                    }
+                });
+            } catch (error) {
+                console.error("Error refreshing fleets:", error);
+            }
+        }
+
+        async function sendDrone() {
+            const latA = parseFloat(document.getElementById("latA").value);
+            const lonA = parseFloat(document.getElementById("lonA").value);
+            const latB = parseFloat(document.getElementById("latB").value);
+            const lonB = parseFloat(document.getElementById("lonB").value);
+
+            if (isNaN(latA) || isNaN(lonA) || isNaN(latB) || isNaN(lonB)) {
+                alert("Συμπληρώστε έγκυρες συντεταγμένες!");
+                return;
+            }
+
+            try {
+                const response = await fetch("http://127.0.0.1:5000/send_drone", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ pointA: { lat: latA, lon: lonA }, pointB: { lat: latB, lon: lonB } }),
+                });
+
+                if (!response.ok) {
+                    const error = await response.json();
+                    alert(error.error || "Σφάλμα αποστολής drone.");
+                    return;
+                }
+
+                const data = await response.json();
+                document.getElementById("results").innerHTML += `Drone αποστέλλεται από: ${data.fleet.name}<br>`;
+                animateRoute(data.route, data.fleet.id);
+            } catch (error) {
+                console.error("Σφάλμα:", error);
+                alert("Αποτυχία σύνδεσης με τον server!");
+            }
+        }
+
+        function animateRoute(route, fleetId) {
+            const waypoints = [
+                { lat: route.start.lat, lng: route.start.lon },
+                { lat: route.to_pickup.lat, lng: route.to_pickup.lon },
+                { lat: route.to_dropoff.lat, lng: route.to_dropoff.lon },
+                { lat: route.return_to_base.lat, lng: route.return_to_base.lon },
+            ];
+
+            const polylinePath = new google.maps.Polyline({
+                path: waypoints,
+                geodesic: true,
+                strokeColor: getRandomColor(),
+                strokeOpacity: 0.8,
+                strokeWeight: 4,
+                map: map,
+            });
+
+            const droneMarker = new google.maps.Marker({
+                position: waypoints[0],
+                map,
+                label: "D",
+                icon: {
+                    path: google.maps.SymbolPath.FORWARD_CLOSED_ARROW,
+                    scale: 5,
+                    fillColor: "red",
+                    fillOpacity: 1,
+                    strokeColor: "black",
+                    strokeWeight: 2,
+                },
+            });
+
+            moveDrone(droneMarker, waypoints, 0, fleetId);
+        }
+
+        async function moveDrone(marker, waypoints, index, fleetId) {
+            if (index >= waypoints.length - 1) {
+                marker.setMap(null);
+                await updateFleetAvailability(fleetId); // Ενημέρωση της βάσης
+                return;
+            }
+
+            const start = waypoints[index];
+            const end = waypoints[index + 1];
+            const distance = calculateDistance(start.lat, start.lng, end.lat, end.lng);
+            const speed = 1500 / 3600;
+            const duration = (distance / speed) * 1000;
+            const steps = duration / 100;
+            const latStep = (end.lat - start.lat) / steps;
+            const lngStep = (end.lng - start.lng) / steps;
+
+            let currentStep = 0;
+            const interval = setInterval(() => {
+                if (currentStep >= steps) {
+                    clearInterval(interval);
+                    moveDrone(marker, waypoints, index + 1, fleetId);
+                    return;
+                }
+
+                const lat = start.lat + latStep * currentStep;
+                const lng = start.lng + lngStep * currentStep;
+                marker.setPosition({ lat, lng });
+
+                currentStep++;
+            }, 100);
+        }
+
+        async function updateFleetAvailability(fleetId) {
+            try {
+                const response = await fetch("http://127.0.0.1:5000/update_fleet", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ fleet_id: fleetId }),
+                });
+
+                if (!response.ok) {
+                    console.error("Failed to update fleet availability:", await response.json());
+                    return;
+                }
+
+                const data = await response.json();
+                console.log(data.message);
+                document.getElementById("results").innerHTML += `Drone επέστρεψε στη βάση του στόλου με ID: ${fleetId}.<br>`;
+            } catch (error) {
+                console.error("Σφάλμα σύνδεσης με τον server για ενημέρωση στόλου:", error);
+            }
+        }
+
+        function getRandomColor() {
+            const letters = "0123456789ABCDEF";
+            let color = "#";
+            for (let i = 0; i < 6; i++) {
+                color += letters[Math.floor(Math.random() * 16)];
+            }
+            return color;
+        }
+
+        function calculateDistance(lat1, lng1, lat2, lng2) {
+            const R = 6371;
+            const dLat = ((lat2 - lat1) * Math.PI) / 180;
+            const dLng = ((lng2 - lng1) * Math.PI) / 180;
+            const a = Math.sin(dLat / 2) ** 2 + Math.cos((lat1 * Math.PI) / 180) * Math.cos((lat2 * Math.PI) / 180) * Math.sin(dLng / 2) ** 2;
+            const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+            return R * c;
+        }
+
+        window.onload = initMap;
+    </script>
+</body>
+</html>
