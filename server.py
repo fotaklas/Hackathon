@@ -1,6 +1,7 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
 import math
+import os
 
 app = Flask(__name__)
 CORS(app)
@@ -72,7 +73,7 @@ def send_drone():
     else:
         return jsonify({"error": "No available fleet found"}), 404
 
-# Νέο endpoint για ενημέρωση στόλου όταν drone επιστρέφει
+# Endpoint για ενημέρωση στόλου όταν drone επιστρέφει
 @app.route('/update_fleet', methods=['POST'])
 def update_fleet():
     data = request.json
@@ -90,6 +91,11 @@ def update_fleet():
     # Αύξηση διαθέσιμων drones
     fleet['drones'] += 1
     return jsonify({"message": f"Fleet {fleet_id} updated. Available drones: {fleet['drones']}"})
+
+# Εξυπηρέτηση του αρχείου index.html
+@app.route('/')
+def serve_index():
+    return send_from_directory(os.getcwd(), 'index.html')
 
 # Εκκίνηση Server
 if __name__ == '__main__':
